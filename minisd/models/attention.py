@@ -58,7 +58,7 @@ class SelfAttention(nn.Module):
         v = v.view(bs, seq_len, self.n_heads, self.d_head).transpose(1, 2)
         
         attn_scores = (q @ k.transpose(-2, -1)) * self.scale
-        if mask is not False:
+        if not mask:
             mask = torch.ones_like(attn_scores).bool().triu(1) # (batch_size, n_heads, seq_len, seq_len)
             attn_scores.masked_fill_(mask, -1e9)
         weights = F.softmax(attn_scores, dim=-1)

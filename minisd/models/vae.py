@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import List, Tuple, Dict, Union, Optional
 
-from attention import SelfAttention
+from .attention import SelfAttention
 
 
 class VaeAttentionBlock(nn.Module):

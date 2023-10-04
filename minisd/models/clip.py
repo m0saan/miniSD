@@ -3,9 +3,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from dataclasses import dataclass
 
-from attention import SelfAttention
+from .attention import SelfAttention
 @dataclass
-class Config:
+class ClipConfig:
     """
     A dataclass to store the configuration of the CLIP model.
     """
@@ -22,7 +22,7 @@ class CLIPEmbedding(nn.Module):
     """
     A class that converts input ids to embeddings.
     """
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: ClipConfig) -> None:
         super().__init__()
         
         self.token_embedding = nn.Embedding(config.vocab_size, config.hidden_size)
@@ -35,7 +35,7 @@ class CLIPEmbedding(nn.Module):
     
 class CLIPBlock(nn.Module):
     
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: ClipConfig) -> None:
         super().__init__()
         
         self.layer_norm1 = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
@@ -57,7 +57,7 @@ class CLIP(nn.Module):
     A basic implementation of OpenAI's CLIP model
     """
     
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: ClipConfig) -> None:
         super().__init__()
         
         self.embeddings = CLIPEmbedding(config)
@@ -72,6 +72,6 @@ class CLIP(nn.Module):
     
     
 if __name__ == "__main__":
-    config = Config()
+    config = ClipConfig()
     model = CLIP(config)
     print(model(torch.randint(0, 100, (1, 77)).type(torch.long)).shape)

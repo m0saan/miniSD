@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from torch import nn
-from unet import UNet, TimeEmbeddings, Head
+from .unet import UNet, TimeEmbeddings, Head
 
 class UnetDiffusionModel(nn.Module):
     """

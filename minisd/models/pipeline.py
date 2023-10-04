@@ -1,14 +1,15 @@
-from typing import Any
+from typing import Any, Callable, Dict, List, Optional, Union, Tuple
 import torch
 import numpy as np
 from tqdm import tqdm
-from typing import Any, Callable, Dict, List, Optional, Union, Tuple
 
-from ddpm import DDPMSampler
-from clip import CLIP
-from vae import VAE
-from diffusion import UnetDiffusionModel
-from utilities.image_utils import ImageProcessor
+from .samplers import DDPMSampler
+from .clip import CLIP, ClipConfig
+from .vae import VAE
+from .diffusion import UnetDiffusionModel
+from .model_converter import load_from_standard_weights
+# from utilities.image_utils import ImageProcessor
+
 
 IMAGE_WIDTH, IMAGE_HEIGHT = 512, 512
 LATENTS_WIDTH = IMAGE_WIDTH // 8
@@ -33,26 +34,46 @@ EXAMPLE_DOC_STRING = """
 class MiniSDPipeline:
     """
     Pipeline for text-to-image generation using Stable Diffusion.
+
+    Attributes:
+        clip (CLIP): The CLIP model.
+        vae (VAE): The VAE model.
+        unet (UnetDiffusionModel): The UNet Diffusion model.
+        ...
     """
-    
-    def __init__(self,) -> None:
+
+    def __init__(
+        self,
+        clip: Optional[CLIP] = None,
+        vae: Optional[VAE] = None,
+        unet: Optional[UnetDiffusionModel] = None,
+        sampler: Optional[DDPMSampler] = None,
+        tokenizer=None,
+        ) -> None:
         
-        self.clip = CLIP()
+        self.clip = CLIP(ClipConfig())
         self.vae = VAE()
         self.unet = UnetDiffusionModel()
-        self.sampler = DDPMSampler()
-        self.image_processor = ImageProcessor()
+        self.sampler = sampler if sampler is not None else DDPMSampler()
+        # self.image_processor = ImageProcessor()
+        self.tokenizer = tokenizer if tokenizer is not None else self._init_tokenizer()
         
+    def load_from_checkpoint(self, checkpoint_path: str, device) -> None:
+        state_dict = load_from_standard_weights(checkpoint_path, device=device)
+        
+        self.clip.load_state_dict(state_dict['clip'], strict=True)
+        self.vae.load_state_dict(state_dict['vae'], strict=True)
+        self.unet.load_state_dict(state_dict['unet'], strict=True)
     
-    def encode_prompt(self, prompt: str, negative_prompt: str, device):
+    def encode_prompt(self, prompt: str, negative_prompt: str, device) -> Tuple[torch.Tensor, torch.Tensor]:
         input_ids = self.tokenizer.batch_encode_plus([prompt], paddings='max_length', max_length=77).input_ids
-        cond_input_ids = torch.tensor(input_ids, device=device, dtype=torch.LongTensor)
+        cond_input_ids = torch.tensor(input_ids, device=device, dtype=torch.long)
         prompt_embeds = self.clip(cond_input_ids) # (batch_size, seq_len, hidden_size): (1, 77, 768)
         
         negative_prompt_embeds = None
         if negative_prompt is not None:    
             input_ids = self.tokenizer.batch_encode_plus([negative_prompt], paddings='max_length', max_length=77).input_ids
-            uncond_input_ids = torch.tensor(input_ids, device=device, dtype=torch.LongTensor)
+            uncond_input_ids = torch.tensor(input_ids, device=device, dtype=torch.long)
             negative_prompt_embeds = self.clip(uncond_input_ids) # (batch_size, seq_len, hidden_size): (1, 77, 768)
         
         return prompt_embeds, negative_prompt_embeds
@@ -65,8 +86,14 @@ class MiniSDPipeline:
             x_rescaled = torch.clamp(x_rescaled, min_new, max_new)
         return x_rescaled
     
-    def get_time_embedding(self, t: int) -> torch.Tensor:
+    def _init_tokenizer(self):
         pass
+    
+    def get_time_embedding(self, t: int) -> torch.Tensor:
+        pe = torch.pow(10000, 2 * torch.arange(0, 160, dtype=torch.float) / 160) # (160, )
+        x = torch.tensor([t], dtype=torch.float) # (1, )
+        freqs = x.unsqueeze(-1) * pe.unsqueeze(0) # (1, 160)
+        return torch.cat([torch.cos(freqs), torch.sin(freqs)], dim=-1) # (1, 320)
         
     @torch.no_grad()
     def __call__(
@@ -82,7 +109,6 @@ class MiniSDPipeline:
         seed: int = None,
         device: str = None,
         idle_device: str = None,
-        tokenizer=None,
         sampler: str = 'ddpm',
     ):
         
@@ -105,17 +131,19 @@ class MiniSDPipeline:
         
         self.clip = self.clip.to(device)
         self.vae = self.vae.to(device)
-        self.une = self.unet.to(device)
+        self.unet = self.unet.to(device)
         if sampler == 'ddpm':
-            self.sampler = self.sampler.to(device)
-            self.sampler.set_generator(generator)
+            # self.sampler = self.sampler.to(device)
+            if generator is not None: self.sampler.set_generator(generator)
             self.sampler.set_inference_steps(num_inference_steps)
         else:
             # TODO: Implement other samplers :Xd
             pass
         
         if do_cfg:
-            prompt_embeds, negative_prompt_embeds = self.encode_prompt(prompt, device, negative_prompt)
+            prompt_embeds, negative_prompt_embeds = self.encode_prompt(prompt, negative_prompt, device)
+            prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds])
+
         else:
             prompt_embeds, negative_prompt_embeds = self.encode_prompt(prompt, None, device)
             
@@ -141,19 +169,18 @@ class MiniSDPipeline:
             
         for t in tqdm(range(num_inference_steps, 0), desc='Inference', leave=False):
             time_embedding = self.get_time_embedding(t).to(device)
-            model_input = latents
             
             if do_cfg:
-                model_input = latents.repeat(2, 1, 1, 1)
+                latent_model_input = torch.cat([latents] * 2) if do_cfg else latents
             
-            noise_pred = self.unet(model_input, t, prompt_embeds)
+            noise_pred = self.unet(latent_model_input, time_embedding, prompt_embeds)
             
             if do_cfg:
                 noise_pred_uncond, noise_pred_cond = noise_pred.chunk(2, dim=0)
                 pred_noise = guidance_scale * (noise_pred_cond - noise_pred_uncond) + noise_pred_uncond
             
             # Remove the noise predicted by the unet
-            latents = self.sampler.step(latents, pred_noise, t)
+            latents = self.sampler.step(latents, pred_noise, self.timesteps[t])
         
         to_idle_fn(self.unet)
         

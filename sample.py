@@ -14,10 +14,11 @@ def generate_image(prompt):
     
     tokenizer = CLIPTokenizer(vocab_file='data/tokenizer/vocab.json', merges_file='data/tokenizer/merges.txt')
     generator = torch.Generator(device=device)
-    sampler = samplers.DDPMSampler(generator=generator)
+    sampler = samplers.DDPMSampler(generator=generator, device=device)
+    negative_prompt = ''
     pipe = pipeline.MiniSDPipeline(tokenizer=tokenizer, sampler=sampler)
-    image = pipe(prompt).images[0]
-    plt.imshow(image)
+    image = pipe(prompt, negative_prompt=negative_prompt)
+    return plt.imshow(image)
 
 def main():
     # parser = argparse.ArgumentParser(description='Generate images from a text prompt.')
@@ -27,16 +28,16 @@ def main():
     # prompt = args.prompt
 
     # print(f'Generating image for prompt: {prompt}')
-    # generate_image(prompt)
+    prompt = 'a photo of a happy dog'
+    generate_image(prompt)
     
-    # timestamp = datetime.now().strftime('%Y%m%d')
-    # sanitized_prompt = prompt.replace(' ', '_').replace('/', '').replace('\\', '')[:50]
-    # filename = f'{sanitized_prompt}_{timestamp}.png'
-    # path = pathlib.Path('data/output_data/')
+    timestamp = datetime.now().strftime('%Y%m%d')
+    sanitized_prompt = prompt.replace(' ', '_').replace('/', '').replace('\\', '')[:50]
+    filename = f'{sanitized_prompt}_{timestamp}.png'
+    path = pathlib.Path('data/output_data/')
 
-    # plt.savefig(path/filename)
-    # print(f'Image saved as {filename}')
-    generate_image('a photo of a happy dog')
+    plt.savefig(path/filename)
+    print(f'Image saved as {filename}')
 
 if __name__ == '__main__':
     main()

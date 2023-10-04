@@ -4,11 +4,12 @@ from torch.nn import functional as F
 
 class DDPMSampler:
     """
-    A PyTorch implementation of the DDPMSampler.
+    A PyTorch implementation of the DDPM Sampler.
     """
     
     def __init__(
         self,
+        device: str,
         generator: torch.Generator = None,
         n_training_steps: int = 1000,
         beta_start: float = 0.0001,
@@ -16,11 +17,12 @@ class DDPMSampler:
         ) -> None:
         
         super().__init__()
+        self.device = device
         self.generator = generator
         self.n_training_steps = n_training_steps
         self.num_inference_steps = n_training_steps
-        self.timesteps = torch.arange(n_training_steps, device=generator.device)
-        self.betas = torch.linspace(beta_start, beta_end, n_training_steps, device=generator.device)
+        self.timesteps = torch.arange(n_training_steps).to(device)
+        self.betas = torch.linspace(beta_start, beta_end, n_training_steps).to(device)
         self.alphas = 1. - self.betas
         self.alpha_bar = self.alphas.cumprod(dim=0)
         self.alpha_bar_prev = F.pad(self.alpha_bar[:-1], (1, 0), value=1.0)
@@ -33,9 +35,9 @@ class DDPMSampler:
         # calculations for posterior q(x_{t-1} | x_t, x_0)
         self.posterior_variance = self.betas * (1. - self.alpha_bar_prev) / (1. - self.alpha_bar)
 
-    def _extract(a: torch.Tensor, t, x_shape):
+    def _extract(self, a: torch.Tensor, t, x_shape):
         batch_size = t.shape[0]
-        out = a.gather(-1, t.cpu())
+        out = a.gather(-1, t)
         return out.reshape(batch_size, *((1,) * (len(x_shape) - 1))).to(t.device)
 
     def set_inference_steps(self, num_inference_steps: torch.IntTensor) -> None:
@@ -61,7 +63,7 @@ class DDPMSampler:
         self.generator = generator
         
         
-    def add_noise(self, latents: torch.Tensor, timestep: torch.IntTensor) -> torch.Tensor:
+    def add_noise(self, latents: torch.Tensor, timestep: torch.Tensor) -> torch.Tensor:
         """
         Adds noise to the latents.
         

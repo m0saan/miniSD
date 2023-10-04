@@ -66,13 +66,13 @@ class MiniSDPipeline:
         self.unet.load_state_dict(state_dict['unet'], strict=True)
     
     def encode_prompt(self, prompt: str, negative_prompt: str, device) -> Tuple[torch.Tensor, torch.Tensor]:
-        input_ids = self.tokenizer.batch_encode_plus([prompt], paddings='max_length', max_length=77).input_ids
+        input_ids = self.tokenizer([prompt], padding="max_length", max_length=77, truncation=True).input_ids
         cond_input_ids = torch.tensor(input_ids, device=device, dtype=torch.long)
         prompt_embeds = self.clip(cond_input_ids) # (batch_size, seq_len, hidden_size): (1, 77, 768)
         
         negative_prompt_embeds = None
         if negative_prompt is not None:    
-            input_ids = self.tokenizer.batch_encode_plus([negative_prompt], paddings='max_length', max_length=77).input_ids
+            input_ids = self.tokenizer([negative_prompt], padding="max_length", max_length=77, truncation=True).input_ids
             uncond_input_ids = torch.tensor(input_ids, device=device, dtype=torch.long)
             negative_prompt_embeds = self.clip(uncond_input_ids) # (batch_size, seq_len, hidden_size): (1, 77, 768)
         
@@ -160,15 +160,16 @@ class MiniSDPipeline:
             latents = self.vae.encode(input_image_tensor, noise=noise)
             
             self.sampler.set_strenght(strength)
-            latents = self.sampler.add_noise(latents, initial_noise=self.timesteps[0])
+            latents = self.sampler.add_noise(latents, torch.full((latents_shape[0],), t, device=self.generator.device, dtype=torch.long))
             
             to_idle_fn(self.vae)
         
         else:
             latents = torch.randn(latents_shape, device=device, generator=generator)
             
-        for t in tqdm(range(num_inference_steps, 0), desc='Inference', leave=False):
+        for t in tqdm(reversed(range(0, num_inference_steps)), desc='Inference', leave=False):
             time_embedding = self.get_time_embedding(t).to(device)
+            timestep = torch.full((latents_shape[0],), t, device=generator.device, dtype=torch.long)
             
             if do_cfg:
                 latent_model_input = torch.cat([latents] * 2) if do_cfg else latents
@@ -180,17 +181,17 @@ class MiniSDPipeline:
                 pred_noise = guidance_scale * (noise_pred_cond - noise_pred_uncond) + noise_pred_uncond
             
             # Remove the noise predicted by the unet
-            latents = self.sampler.step(latents, pred_noise, self.timesteps[t])
+            latents = self.sampler.step(latents, pred_noise, timestep)
         
         to_idle_fn(self.unet)
         
         self.vae.to(device)
-        images = self.vae.decode(latents)
+        images = self.vae.decode(latents.clone().detach())
         to_idle_fn(self.vae)
         
         # TODO: Implement image processing in ImageProcessor
         images = self.rescale(images, (-1, 1), (0, 255), clamp=True)
-        images = images.permute(0, 2, 3, 1).cpu().astype(torch.uint8).numpy()
+        images = images.permute(0, 2, 3, 1).cpu().type(torch.uint8).squeeze(0).numpy()
         return images
                 
             
